@@ -1,0 +1,1441 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Central de IA Premium</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/marked@9.1.6/marked.min.js"></script>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked-katex-extension@4.0.3/lib/index.umd.js"></script>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"></script>
+
+    <style>
+        :root {
+            --bg-main: #0b0b0f;
+            --bg-sidebar: #13131a;
+            --bg-chat: #16161e;
+            --bg-burbuja-user: #3b82f6;
+            --bg-burbuja-bot: transparent;
+            --texto-principal: #f3f4f6;
+            --texto-secundario: #9ca3af;
+            --borde: #27273a;
+            --fuente: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            --color-consola: #10b981;
+        }
+
+        body.modo-consola {
+            --bg-main: #000000;
+            --bg-sidebar: #050505;
+            --bg-chat: #0a0a0a;
+            --bg-burbuja-user: #153321;
+            --bg-burbuja-bot: #111111;
+            --texto-principal: #10b981;
+            --texto-secundario: #059669;
+            --borde: #10b981;
+            --fuente: 'Courier New', Courier, monospace;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            background-color: var(--bg-main);
+            font-family: var(--fuente);
+            color: var(--texto-principal);
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+            overflow: hidden;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* --- PANTALLA DE LOGIN --- */
+        .login-screen {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background-color: #0b0b0f;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.3s ease;
+        }
+
+        .login-box {
+            background-color: var(--bg-sidebar);
+            padding: 40px;
+            border-radius: 16px;
+            border: 1px solid var(--borde);
+            width: 380px;
+            text-align: center;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.7);
+        }
+
+        .login-box h2 { margin-bottom: 24px; font-size: 1.6rem; font-weight: 600; letter-spacing: -0.5px; }
+        .login-box input {
+            width: 100%; padding: 12px 16px; margin-bottom: 16px;
+            border-radius: 8px; border: 1px solid var(--borde);
+            background-color: var(--bg-main); color: white; outline: none;
+            font-size: 0.95rem; transition: border 0.2s;
+        }
+        .login-box input:focus { border-color: #3b82f6; }
+        .login-box button {
+            width: 100%; padding: 12px; border-radius: 8px; border: none;
+            background-color: #3b82f6; color: white; font-weight: 600; cursor: pointer; font-size: 0.95rem;
+            transition: background 0.2s;
+        }
+        .login-box button:hover { background-color: #2563eb; }
+
+        /* --- CONTENEDOR PRINCIPAL --- */
+        .app-container {
+            display: none;
+            width: 100%;
+            height: 100%;
+        }
+
+        /* --- PANEL LATERAL (SIDEBAR) --- */
+        .sidebar {
+            width: 280px;
+            height: 100%;
+            background-color: var(--bg-sidebar);
+            border-right: 1px solid var(--borde);
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+        }
+
+        .btn-nuevo-chat {
+            background-color: rgba(255, 255, 255, 0.03);
+            color: var(--texto-principal);
+            border: 1px solid var(--borde);
+            padding: 12px 16px;
+            border-radius: 10px;
+            cursor: pointer;
+            margin-bottom: 24px;
+            font-weight: 500;
+            font-size: 0.95rem;
+            text-align: left;
+            transition: all 0.2s;
+        }
+        .btn-nuevo-chat:hover { background-color: rgba(255,255,255,0.08); border-color: #4b5563; }
+
+        .lista-chats {
+            flex: 1;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .item-chat {
+            padding: 10px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            color: var(--texto-secundario);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            transition: all 0.15s;
+        }
+        .item-chat:hover, .item-chat.activo {
+            background-color: rgba(255, 255, 255, 0.05);
+            color: var(--texto-principal);
+        }
+        .item-chat.activo { font-weight: 500; background-color: rgba(59, 130, 246, 0.1); color: #3b82f6; }
+
+        .info-usuario-footer {
+            padding-top: 15px;
+            border-top: 1px solid var(--borde);
+            font-size: 0.85rem;
+            color: var(--texto-secundario);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* --- CONTENEDOR CENTRAL DE CHAT --- */
+        .chat-main {
+            flex: 1;
+            height: 100%;
+            background-color: var(--bg-chat);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .header-chat {
+            width: 100%;
+            max-width: 840px;
+            padding: 18px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-chat select {
+            background: var(--bg-sidebar);
+            color: var(--texto-principal);
+            border: 1px solid var(--borde);
+            padding: 8px 14px;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 0.9rem;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .header-chat button {
+            background: transparent;
+            color: var(--texto-secundario);
+            border: 1px solid var(--borde);
+            padding: 8px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        .header-chat button:hover { color: var(--texto-principal); border-color: #4b5563; }
+
+        .pantalla-mensajes {
+            width: 100%;
+            max-width: 840px;
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 28px;
+        }
+
+        .bloque-mensaje { display: flex; flex-direction: column; width: 100%; }
+        .bloque-mensaje.user { align-items: flex-end; }
+        .bloque-mensaje.bot { align-items: flex-start; }
+        
+        .meta-info { font-size: 0.8rem; font-weight: 600; margin-bottom: 6px; color: var(--texto-secundario); text-transform: uppercase; letter-spacing: 0.5px; }
+        .user .meta-info { color: #3b82f6; }
+
+        .burbuja {
+            font-size: 1rem;
+            line-height: 1.6;
+            word-wrap: break-word;
+            max-width: 85%;
+        }
+
+        .user .burbuja {
+            background-color: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.3);
+            padding: 12px 18px;
+            border-radius: 18px;
+            color: var(--texto-principal);
+        }
+
+        .bot .burbuja {
+            color: #e5e7eb;
+            width: 100%;
+            max-width: 100%;
+        }
+        .bot .burbuja p { margin-bottom: 12px; }
+        .bot .burbuja h3 { margin: 18px 0 8px 0; font-size: 1.25rem; color: #ffffff; }
+        .bot .burbuja ul, .bot .burbuja ol { margin-left: 20px; margin-bottom: 12px; }
+        .bot .burbuja li { margin-bottom: 4px; }
+        .bot .burbuja strong { color: #ffffff; font-weight: 600; }
+        .bot .burbuja hr { border: 0; border-top: 1px solid var(--borde); margin: 20px 0; }
+        
+        /* Estilos para los bloques de código renderizados */
+        .burbuja pre {
+            background-color: #0d1117;
+            border: 1px solid var(--borde);
+            border-radius: 8px;
+            padding: 12px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        .burbuja pre code {
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 0.9rem;
+        }
+        
+        body.modo-consola .burbuja { color: var(--color-consola) !important; }
+
+        .katex-display { margin: 1em 0; overflow-x: auto; overflow-y: hidden; }
+        .katex { font-size: 1.05em; color: #ffffff; }
+
+        /* --- PANEL CALCULADORA AMPLIFICADOR --- */
+        .panel-amp {
+            background: var(--bg-sidebar);
+            border: 1px solid var(--borde);
+            border-radius: 14px;
+            padding: 20px;
+            margin: 14px 0;
+            width: 100%;
+        }
+        .panel-amp h4 {
+            color: #10b981;
+            font-size: 0.9rem;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .amp-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        .amp-grid label {
+            font-size: 0.78rem;
+            color: var(--texto-secundario);
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .amp-grid input, .amp-grid select {
+            background: var(--bg-main);
+            color: var(--texto-principal);
+            border: 1px solid var(--borde);
+            border-radius: 7px;
+            padding: 7px 10px;
+            font-size: 0.85rem;
+            outline: none;
+            transition: border 0.2s;
+        }
+        .amp-grid input:focus, .amp-grid select:focus { border-color: #10b981; }
+        .btn-calcular-amp {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            border: none;
+            border-radius: 9px;
+            padding: 10px 22px;
+            font-weight: 600;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.15s;
+            width: 100%;
+            margin-bottom: 16px;
+        }
+        .btn-calcular-amp:hover { opacity: 0.9; transform: translateY(-1px); }
+        .btn-calcular-amp:active { transform: translateY(0); }
+        .amp-resultado {
+            display: none;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .amp-resultado.visible { display: flex; }
+        .amp-seccion {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid var(--borde);
+            border-radius: 10px;
+            padding: 14px;
+        }
+        .amp-seccion h5 {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--texto-secundario);
+            margin-bottom: 10px;
+        }
+        .amp-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .amp-chip {
+            background: rgba(16,185,129,0.08);
+            border: 1px solid rgba(16,185,129,0.25);
+            border-radius: 20px;
+            padding: 5px 12px;
+            font-size: 0.82rem;
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .amp-chip .chip-label { color: var(--texto-secundario); }
+        .amp-chip .chip-valor { color: #fbbf24; font-weight: 600; }
+        .amp-bias-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+            gap: 8px;
+        }
+        .amp-bias-card {
+            background: rgba(59,130,246,0.08);
+            border: 1px solid rgba(59,130,246,0.2);
+            border-radius: 9px;
+            padding: 10px;
+            text-align: center;
+        }
+        .amp-bias-card .bval { color: #93c5fd; font-size: 1.1rem; font-weight: 700; }
+        .amp-bias-card .blabel { color: var(--texto-secundario); font-size: 0.72rem; margin-top: 2px; }
+        .amp-notas { list-style: none; padding: 0; }
+        .amp-notas li {
+            padding: 5px 0;
+            font-size: 0.83rem;
+            color: var(--texto-secundario);
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+            display: flex;
+            gap: 8px;
+        }
+        .amp-notas li::before { content: "⚡"; flex-shrink: 0; }
+        .amp-svg-wrap { width: 100%; overflow-x: auto; border-radius: 10px; }
+        .amp-svg-wrap svg { max-width: 100%; height: auto; }
+        .amp-loader {
+            display: none;
+            align-items: center;
+            gap: 10px;
+            color: #10b981;
+            font-size: 0.9rem;
+            padding: 10px 0;
+        }
+        .amp-loader.visible { display: flex; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .amp-spinner {
+            width: 18px; height: 18px;
+            border: 2px solid rgba(16,185,129,0.3);
+            border-top-color: #10b981;
+            border-radius: 50%;
+            animation: spin 0.7s linear infinite;
+        }
+
+        .contenedor-grafico-audio {
+            background: var(--bg-sidebar);
+            border: 1px solid var(--borde);
+            border-radius: 12px;
+            padding: 18px;
+            margin: 14px 0;
+            width: 100%;
+            display: none;
+        }
+
+        /* --- CONTENEDOR DE ENTRADA --- */
+        .contenedor-inferior {
+            width: 100%;
+            max-width: 840px;
+            display: flex;
+            flex-direction: column;
+            padding: 0 20px 24px 20px;
+        }
+
+        .badge-archivo {
+            background-color: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--borde);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            margin-bottom: 12px;
+            align-self: flex-start;
+            display: none;
+            align-items: center;
+            gap: 10px;
+            color: var(--texto-secundario);
+        }
+        .badge-archivo .btn-quitar { cursor: pointer; color: #ef4444; font-weight: bold; margin-left: 4px; }
+
+        .caja-entrada-unificada {
+            width: 100%;
+            display: flex;
+            align-items: center;
+            background-color: var(--bg-sidebar);
+            border: 1px solid var(--borde);
+            border-radius: 24px;
+            padding: 6px 12px 6px 16px;
+            transition: border-color 0.2s;
+        }
+        .caja-entrada-unificada:focus-within { border-color: #4b5563; }
+        body.modo-consola .caja-entrada-unificada { background-color: #000000; border-color: var(--color-consola); }
+
+        .input-mensaje {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 1rem;
+            font-family: inherit;
+            outline: none;
+            padding: 10px 0;
+        }
+        .input-mensaje:disabled { opacity: 0.5; cursor: not-allowed; }
+        body.modo-consola .input-mensaje { color: var(--color-consola); }
+
+        .btn-adjuntar {
+            background: transparent;
+            color: var(--texto-secundario);
+            border: none;
+            font-size: 1.3rem;
+            cursor: pointer;
+            padding: 8px;
+            margin-right: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s;
+        }
+        .btn-adjuntar:hover { color: var(--texto-principal); }
+        body.modo-consola .btn-adjuntar { color: var(--color-consola); }
+
+        .btn-enviar {
+            background-color: #ffffff;
+            color: #000000;
+            border: none;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            transition: transform 0.15s, opacity 0.15s;
+        }
+        .btn-enviar:hover:not(:disabled) { transform: scale(1.05); }
+        .btn-enviar:active:not(:disabled) { transform: scale(0.95); }
+        .btn-enviar:disabled { background-color: #6b7280; cursor: not-allowed; opacity: 0.5; }
+        body.modo-consola .btn-enviar { background-color: #153321; color: var(--color-consola); border: 1px solid var(--color-consola); }
+
+        .input-busqueda-chat, .memoria-box textarea {
+            width: 100%;
+            background: var(--bg-main);
+            color: var(--texto-principal);
+            border: 1px solid var(--borde);
+            border-radius: 8px;
+            padding: 9px 10px;
+            font-family: inherit;
+            font-size: 0.85rem;
+            outline: none;
+            margin-bottom: 12px;
+        }
+        .input-busqueda-chat:focus, .memoria-box textarea:focus { border-color: #3b82f6; }
+        .memoria-box {
+            border: 1px solid var(--borde);
+            border-radius: 12px;
+            padding: 12px;
+            margin: 16px 0;
+            background: rgba(255,255,255,0.02);
+        }
+        .memoria-box h4 {
+            font-size: 0.75rem;
+            color: var(--texto-secundario);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 8px;
+        }
+        .memoria-box textarea {
+            min-height: 90px;
+            resize: vertical;
+            margin-bottom: 8px;
+        }
+        .mini-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+        .mini-actions button, .chat-actions button {
+            border: 1px solid var(--borde);
+            background: rgba(255,255,255,0.03);
+            color: var(--texto-secundario);
+            border-radius: 7px;
+            padding: 6px 8px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+        .mini-actions button:hover, .chat-actions button:hover { color: var(--texto-principal); border-color: #4b5563; }
+        .item-chat { display: flex; align-items: center; gap: 8px; }
+        .item-chat .chat-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+        .chat-actions { display: none; gap: 4px; }
+        .item-chat:hover .chat-actions, .item-chat.activo .chat-actions { display: flex; }
+        .header-chat .selectores { display: flex; flex-wrap: wrap; gap: 8px; }
+        .herramientas-chat { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+        .controles-audio {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        .controles-audio label { font-size: 0.78rem; color: var(--texto-secundario); }
+        .controles-audio select, .controles-audio input {
+            width: 100%;
+            margin-top: 5px;
+            background: var(--bg-main);
+            color: var(--texto-principal);
+            border: 1px solid var(--borde);
+            border-radius: 7px;
+            padding: 7px;
+        }
+    </style>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+</head>
+<body>
+
+    <div class="login-screen" id="login-screen">
+        <div class="login-box">
+            <h2>Ingreso al Sistema</h2>
+            <input type="text" id="login-user" placeholder="Usuario (fede, clara...)" onkeydown="if(event.key==='Enter') ejecutarLogin()">
+            <input type="password" id="login-pass" placeholder="Contraseña" onkeydown="if(event.key==='Enter') ejecutarLogin()">
+            <button onclick="ejecutarLogin()">Iniciar Sesión</button>
+            <div id="login-error" style="color: #ef4444; font-size: 0.85rem; margin-top: 10px; display: none;">Credenciales incorrectas</div>
+        </div>
+    </div>
+
+    <div class="app-container" id="app-container">
+        
+        <div class="sidebar">
+            <button class="btn-nuevo-chat" onclick="crearNuevoChat()">➕ Nuevo Chat</button>
+            <input class="input-busqueda-chat" id="input-busqueda-chat" placeholder="Buscar chats o mensajes..." oninput="cargarListaHistoriales(this.value)">
+            <h4 style="font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; color: var(--texto-secundario); opacity: 0.6;">Historial Reciente</h4>
+            <div class="lista-chats" id="lista-chats"></div>
+
+            <div class="memoria-box">
+                <h4>Memoria del bot</h4>
+                <textarea id="textarea-memoria" placeholder="Datos permanentes: preferencias, proyectos, tono, equipos, objetivos..."></textarea>
+                <div class="mini-actions">
+                    <button onclick="guardarMemoria()">Guardar</button>
+                    <button onclick="borrarMemoria()">Borrar</button>
+                </div>
+            </div>
+            
+            <div class="info-usuario-footer">
+                <span id="txt-usuario-activo">User: -</span>
+                <span style="cursor:pointer;" onclick="location.reload()">Cerrar Sesión 🚪</span>
+            </div>
+        </div>
+
+        <div class="chat-main">
+            <div class="header-chat">
+                <div class="selectores">
+                    <select id="select-perfil">
+                        <option value="ml_engineer">🤖 Ing. Machine Learning</option>
+                        <option value="profesional" selected>🎛️ Ing. de Audio y Electrónica</option>
+                        <option value="creativo">💬 Asistente General / Libre</option>
+                        <option value="educador">🎓 Tutor / Educador</option>
+                        <option value="copywriter">✍️ Copywriter / Contenido</option>
+                    </select>
+                    <select id="select-modelo">
+                        <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                    </select>
+                </div>
+                <div class="herramientas-chat">
+                    <button onclick="exportarChat('md')">⬇️ MD</button>
+                    <button onclick="exportarChat('txt')">⬇️ TXT</button>
+                    <button onclick="exportarChat('json')">⬇️ JSON</button>
+                    <button onclick="compartirChatPorLink()">🔗 Compartir</button>
+                    <button onclick="togglePanelAmp()" id="btn-toggle-amp" title="Calculadora de Amplificadores">🔌 Amp</button>
+                    <button onclick="document.body.classList.toggle('modo-consola')">🌓 Modo Consola</button>
+                </div>                    
+            </div>
+
+            <div class="pantalla-mensajes" id="pantalla-mensajes">
+                <div class="bloque-mensaje bot">
+                    <div class="meta-info">Sistema</div>
+                    <div class="burbuja">Bienvenido a tu entorno privado. Selecciona un chat del panel lateral o inicia uno nuevo para interactuar con la IA.</div>
+                </div>
+            </div>
+
+            <!-- PANEL CALCULADORA DE AMPLIFICADORES -->
+            <div class="panel-amp" id="panel-amp" style="display:none; max-width:840px; align-self:center; width:100%; margin: 0 20px;">
+                <h4>🔌 Calculadora de Amplificadores</h4>
+                <div class="amp-grid">
+                    <label>Topología
+                        <select id="amp-topologia">
+                            <option value="clase_a">Clase A (Emisor Común)</option>
+                            <option value="clase_ab">Clase AB (Push-Pull)</option>
+                        </select>
+                    </label>
+                    <label>Transistor
+                        <input type="text" id="amp-transistor" value="2N3055" placeholder="ej: 2N3055">
+                    </label>
+                    <label>Vcc (V)
+                        <input type="number" id="amp-vcc" value="24" min="3" max="100" step="1">
+                    </label>
+                    <label>Potencia salida (W)
+                        <input type="number" id="amp-potencia" value="5" min="0.1" max="500" step="0.5">
+                    </label>
+                    <label>Impedancia carga (Ω)
+                        <input type="number" id="amp-rl" value="8" min="2" max="32" step="2">
+                    </label>
+                </div>
+                <button class="btn-calcular-amp" onclick="calcularAmplificador()">⚡ Calcular y Generar Esquemático</button>
+
+                <div class="amp-loader" id="amp-loader">
+                    <div class="amp-spinner"></div>
+                    Calculando punto de operación...
+                </div>
+
+                <div class="amp-resultado" id="amp-resultado">
+                    <!-- Esquemático SVG -->
+                    <div class="amp-seccion">
+                        <h5>📐 Esquemático</h5>
+                        <div class="amp-svg-wrap" id="amp-svg"></div>
+                    </div>
+                    <!-- Punto de bias -->
+                    <div class="amp-seccion">
+                        <h5>🎯 Punto de Operación (Bias)</h5>
+                        <div class="amp-bias-grid" id="amp-bias"></div>
+                    </div>
+                    <!-- Componentes -->
+                    <div class="amp-seccion">
+                        <h5>🧩 Valores de Componentes</h5>
+                        <div class="amp-chips" id="amp-componentes"></div>
+                    </div>
+                    <!-- Performance -->
+                    <div class="amp-seccion">
+                        <h5>📊 Performance</h5>
+                        <div class="amp-chips" id="amp-performance"></div>
+                    </div>
+                    <!-- Notas -->
+                    <div class="amp-seccion">
+                        <h5>⚠️ Notas de Diseño</h5>
+                        <ul class="amp-notas" id="amp-notas"></ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="contenedor-inferior">
+                <div class="badge-archivo" id="badge-archivo">
+                    <span>📎 <strong id="nombre-archivo-cargado" style="color: white;">ninguno</strong></span>
+                    <span class="btn-quitar" onclick="cancelarArchivo()">×</span>
+                </div>
+                
+                <div class="caja-entrada-unificada">
+                    <input type="file" id="selector-archivo" style="display: none;" onchange="archivoSeleccionado(this)">
+                    <button class="btn-adjuntar" onclick="document.getElementById('selector-archivo').click()" title="Adjuntar archivo">📎</button>
+                    <input type="text" class="input-mensaje" id="input-mensaje" placeholder="Preguntale lo que quieras a la IA..." onkeydown="if(event.key==='Enter') enviarMensaje()">
+                    <button class="btn-enviar" onclick="enviarMensaje()">➔</button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        let usuarioActivo = "";
+        let chatActivoId = "chat_general";
+        let archivoParaSubir = null;
+        let miGraficoAudio = null;
+        let busquedaActual = "";
+
+        // Configuración moderna de Marked.js con Highlight.js y KaTeX
+        // markedKatexExtension debe ir PRIMERO
+        marked.use(markedKatexExtension({
+            throwOnError: false,
+            nonStandard: true,
+            delimiters: [
+                { left: "$$", right: "$$", display: true },
+                { left: "\\[", right: "\\]", display: true },
+                { left: "$", right: "$", display: false },
+                { left: "\\(", right: "\\)", display: false }
+            ]
+        }));
+        marked.use({
+            gfm: true,
+            breaks: true,
+            walkTokens(token) {
+                if (token.type === 'code') {
+                    const language = hljs.getLanguage(token.lang) ? token.lang : 'plaintext';
+                    token.text = hljs.highlight(token.text, { language }).value;
+                    token.escaped = true;
+                }
+            }
+        });
+
+        // Función purificadora de sintaxis matemática (conservadora para no romper LaTeX)
+        function limpiarTextoParaKatex(textoOriginal) {
+            if (!textoOriginal) return "";
+            // Solo eliminar caracteres de espacio no-ruptura que pueden confundir al parser
+            return textoOriginal.replace(/\u00A0/g, ' ');
+        }
+
+        async function ejecutarLogin() {
+            const user = document.getElementById("login-user").value.trim();
+            const pass = document.getElementById("login-pass").value.trim();
+            const errorDiv = document.getElementById("login-error");
+
+            try {
+                const response = await fetch("/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ usuario: user, password: pass })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    usuarioActivo = data.usuario;
+                    
+                    document.getElementById("login-screen").style.display = "none";
+                    document.getElementById("app-container").style.display = "flex";
+                    document.getElementById("txt-usuario-activo").innerText = `User: ${usuarioActivo}`;
+                    
+                    await cargarModelos();
+                    await cargarMemoria();
+                    await cargarListaHistoriales();
+                } else {
+                    errorDiv.style.display = "block";
+                }
+            } catch (e) {
+                alert("Error de conexión con el backend");
+            }
+        }
+
+        async function cargarModelos() {
+            try {
+                const response = await fetch("/modelos");
+                const data = await response.json();
+                const select = document.getElementById("select-modelo");
+                select.innerHTML = "";
+                data.modelos.forEach(modelo => {
+                    const option = document.createElement("option");
+                    option.value = modelo;
+                    option.innerText = modelo;
+                    select.appendChild(option);
+                });
+            } catch (e) {
+                console.warn("No se pudo cargar la lista de modelos", e);
+            }
+        }
+
+        async function cargarMemoria() {
+            try {
+                const response = await fetch(`/memoria/${usuarioActivo}`);
+                const data = await response.json();
+                document.getElementById("textarea-memoria").value = data.memoria || "";
+            } catch (e) {
+                console.warn("No se pudo cargar la memoria", e);
+            }
+        }
+
+        async function guardarMemoria() {
+            const memoria = document.getElementById("textarea-memoria").value;
+            const response = await fetch(`/memoria/${usuarioActivo}`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ memoria })
+            });
+            alert(response.ok ? "Memoria guardada." : "No se pudo guardar la memoria.");
+        }
+
+        async function borrarMemoria() {
+            if (!confirm("¿Borrar la memoria permanente de este usuario?")) return;
+            const response = await fetch(`/memoria/${usuarioActivo}`, { method: "DELETE" });
+            if (response.ok) {
+                document.getElementById("textarea-memoria").value = "";
+                alert("Memoria borrada.");
+            }
+        }
+
+        function crearItemChat(nombreChat, index) {
+            const div = document.createElement("div");
+            div.classList.add("item-chat");
+            div.dataset.chat = nombreChat;
+            if (index === 0 && !chatActivoId) {
+                div.classList.add("activo");
+                chatActivoId = nombreChat;
+            }
+
+            const nombre = document.createElement("span");
+            nombre.className = "chat-name";
+            nombre.innerText = nombreChat;
+            nombre.onclick = () => seleccionarChat(nombreChat, div);
+
+            const acciones = document.createElement("span");
+            acciones.className = "chat-actions";
+            acciones.innerHTML = `<button title="Renombrar">✏️</button><button title="Borrar">🗑️</button>`;
+            acciones.children[0].onclick = (ev) => { ev.stopPropagation(); renombrarChat(nombreChat); };
+            acciones.children[1].onclick = (ev) => { ev.stopPropagation(); borrarChat(nombreChat); };
+
+            div.appendChild(nombre);
+            div.appendChild(acciones);
+            div.onclick = () => seleccionarChat(nombreChat, div);
+            return div;
+        }
+
+        async function cargarListaHistoriales(consulta = busquedaActual) {
+            busquedaActual = consulta;
+            try {
+                const query = consulta ? `?q=${encodeURIComponent(consulta)}` : "";
+                const response = await fetch(`/chats/${usuarioActivo}${query}`);
+                const data = await response.json();
+                const contenedor = document.getElementById("lista-chats");
+                contenedor.innerHTML = "";
+
+                if (data.chats.length === 0) {
+                    const div = crearItemChat("chat_general", 0);
+                    div.classList.add("activo");
+                    contenedor.appendChild(div);
+                    chatActivoId = "chat_general";
+                    return;
+                }
+
+                if (!data.chats.includes(chatActivoId)) chatActivoId = data.chats[0];
+
+                data.chats.forEach((nombreChat, index) => {
+                    const div = crearItemChat(nombreChat, index);
+                    if (nombreChat === chatActivoId) div.classList.add("activo");
+                    contenedor.appendChild(div);
+                });
+            } catch (e) {
+                console.error("Error cargando panel lateral", e);
+            }
+        }
+
+        async function seleccionarChat(idChat, elementoDom) {
+            chatActivoId = idChat;
+            document.querySelectorAll(".item-chat").forEach(el => el.classList.remove("activo"));
+            if (elementoDom) elementoDom.classList.add("activo");
+
+            const pantalla = document.getElementById("pantalla-mensajes");
+            pantalla.innerHTML = "";
+
+            try {
+                const response = await fetch(`/chats/${usuarioActivo}/${idChat}`);
+                const data = await response.json();
+                if (data.mensajes && data.mensajes.length > 0) {
+                    data.mensajes.forEach(m => agregarBurbuja(m.role === "user" ? usuarioActivo : "IA", m.content || "", m.role === "user" ? "user" : "bot"));
+                    return;
+                }
+            } catch (e) {
+                console.warn("No se pudo cargar el historial", e);
+            }
+
+            pantalla.innerHTML = `
+                <div class="bloque-mensaje bot">
+                    <div class="meta-info">Sistema</div>
+                    <div class="burbuja">Cargaste el canal <strong>${escapeHTML(idChat)}</strong>. Todo lo que escribas se guardará de forma privada en este hilo.</div>
+                </div>
+            `;
+        }
+
+        function crearNuevoChat() {
+            const nombre = prompt("Ingresa el nombre para el nuevo hilo de chat:");
+            if (!nombre) return;
+            const limpio = nombre.replace(/[^a-zA-Z0-9-_]/g, "_").toLowerCase();
+            chatActivoId = limpio;
+            cargarListaHistoriales("").then(() => {
+                const selectorSeguro = window.CSS && CSS.escape ? CSS.escape(limpio) : limpio.replace(/"/g, '\"');
+                const item = document.querySelector(`.item-chat[data-chat="${selectorSeguro}"]`) || crearItemChat(limpio, 0);
+                if (!item.parentElement) document.getElementById("lista-chats").prepend(item);
+                seleccionarChat(limpio, item);
+            });
+        }
+
+        async function renombrarChat(nombreChat) {
+            const nuevoNombre = prompt("Nuevo nombre del chat:", nombreChat);
+            if (!nuevoNombre || nuevoNombre === nombreChat) return;
+            const response = await fetch(`/chats/${usuarioActivo}/${nombreChat}/renombrar`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ nuevo_nombre: nuevoNombre })
+            });
+            if (!response.ok) {
+                alert("No se pudo renombrar el chat.");
+                return;
+            }
+            const data = await response.json();
+            chatActivoId = data.id_chat;
+            await cargarListaHistoriales();
+        }
+
+        async function borrarChat(nombreChat) {
+            if (!confirm(`¿Borrar definitivamente el chat "${nombreChat}"?`)) return;
+            const response = await fetch(`/chats/${usuarioActivo}/${nombreChat}`, { method: "DELETE" });
+            if (!response.ok) {
+                alert("No se pudo borrar el chat.");
+                return;
+            }
+            chatActivoId = "";
+            await cargarListaHistoriales();
+            document.getElementById("pantalla-mensajes").innerHTML = `
+                <div class="bloque-mensaje bot"><div class="meta-info">Sistema</div><div class="burbuja">Chat borrado. Selecciona otro hilo o crea uno nuevo.</div></div>
+            `;
+        }
+
+        // --- Exportación de chat renderizada desde el DOM localmente ---
+        function exportarChat(formato) {
+            if (!chatActivoId) {
+                alert("Primero selecciona una conversación.");
+                return;
+            }
+            const mensajes = document.querySelectorAll('.bloque-mensaje');
+            if (mensajes.length <= 1) {
+                alert("No hay mensajes suficientes para exportar.");
+                return;
+            }
+
+            let contenido = "";
+            let dataArr = [];
+            
+            mensajes.forEach(m => {
+                const remitente = m.querySelector('.meta-info').innerText;
+                const texto = m.querySelector('.burbuja').innerText;
+                
+                if (formato === 'json') {
+                    dataArr.push({ role: remitente, content: texto });
+                } else if (formato === 'md') {
+                    contenido += `### ${remitente}\n${texto}\n\n---\n\n`;
+                } else {
+                    contenido += `[${remitente}]\n${texto}\n\n`;
+                }
+            });
+
+            if (formato === 'json') contenido = JSON.stringify(dataArr, null, 2);
+
+            const blob = new Blob([contenido], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `historial_${chatActivoId}.${formato}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function archivoSeleccionado(input) {
+            if (input.files.length === 0) return;
+            archivoParaSubir = input.files[0];
+            document.getElementById("nombre-archivo-cargado").innerText = archivoParaSubir.name;
+            document.getElementById("badge-archivo").style.display = "flex";
+        }
+
+        function cancelarArchivo() {
+            archivoParaSubir = null;
+            document.getElementById("selector-archivo").value = "";
+            document.getElementById("badge-archivo").style.display = "none";
+        }
+
+        async function enviarMensaje() {
+            const inputMsg = document.getElementById("input-mensaje");
+            const btnEnviar = document.querySelector(".btn-enviar");
+            const selectPerfil = document.getElementById("select-perfil");
+            const selectModelo = document.getElementById("select-modelo");
+            
+            const mensaje = inputMsg.value.trim();
+            const perfil = selectPerfil.value;
+            const modeloElegido = selectModelo.value;
+
+            if (!mensaje && !archivoParaSubir) return;
+
+            // Bloquear inputs para prevenir spam
+            inputMsg.disabled = true;
+            btnEnviar.disabled = true;
+
+            try {
+                let contextoArchivo = "";
+                let nombreArchivoParaBurbuja = "";
+
+                if (archivoParaSubir) {
+                    nombreArchivoParaBurbuja = archivoParaSubir.name;
+                    const formData = new FormData();
+                    formData.append("file", archivoParaSubir);
+
+                    try {
+                        const uploadResponse = await fetch("/upload", { method: "POST", body: formData });
+                        if (!uploadResponse.ok) throw new Error();
+                        const uploadData = await uploadResponse.json();
+                        contextoArchivo = uploadData.contexto;
+                    } catch (e) {
+                        agregarBurbuja("Error", "No se pudo procesar el archivo adjunto.", "bot");
+                        throw new Error("Fallo la subida");
+                    }
+                }
+
+                let textoMuestra = mensaje;
+                if (nombreArchivoParaBurbuja) {
+                    textoMuestra = `[Adjunto: ${nombreArchivoParaBurbuja}]\n${mensaje}`;
+                }
+
+                agregarBurbuja(usuarioActivo, textoMuestra, "user");
+                inputMsg.value = "";
+                cancelarArchivo();
+
+                const promptFinal = mensaje + contextoArchivo;
+                const response = await fetch("/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        usuario: usuarioActivo,
+                        id_chat: chatActivoId,
+                        personalidad: perfil,
+                        mensaje: promptFinal,
+                        modelo_elegido: modeloElegido
+                    })
+                });
+
+                if (!response.ok) throw new Error();
+
+                const nombreBot = selectPerfil.options[selectPerfil.selectedIndex].text.split(" ")[1];
+                const pantalla = document.getElementById("pantalla-mensajes");
+                
+                const bloque = document.createElement("div");
+                bloque.classList.add("bloque-mensaje", "bot");
+                bloque.innerHTML = `
+                    <div class="meta-info">${nombreBot}</div>
+                    <div class="burbuja" id="burbuja-temporal-stream">...</div>
+                `;
+                pantalla.appendChild(bloque);
+                pantalla.scrollTop = pantalla.scrollHeight;
+
+                const burbujaStream = document.getElementById("burbuja-temporal-stream");
+                
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder("utf-8");
+                let acumuladorTexto = "";
+                let bufferSSE = "";
+
+                let ultimaActualizacion = 0;
+                const TASA_REFRESCO = 50;
+
+                function procesarEventoSSE(evento) {
+                    const fragmento = evento
+                        .split("\n")
+                        .filter(linea => linea.startsWith("data:"))
+                        .map(linea => linea.slice(5).replace(/^ /, ""))
+                        .join("\n");
+
+                    if (!fragmento) return;
+                    acumuladorTexto += fragmento;
+
+                    const ahora = Date.now();
+                    if (ahora - ultimaActualizacion > TASA_REFRESCO) {
+                        let textoProcesado = limpiarTextoParaKatex(acumuladorTexto);
+                        burbujaStream.innerHTML = DOMPurify.sanitize(marked(textoProcesado));
+                        pantalla.scrollTop = pantalla.scrollHeight;
+                        ultimaActualizacion = ahora;
+                    }
+                }
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    bufferSSE += decoder.decode(value, { stream: true });
+                    const eventos = bufferSSE.split("\n\n");
+                    bufferSSE = eventos.pop() || "";
+
+                    for (let evento of eventos) {
+                        procesarEventoSSE(evento);
+                    }
+                }
+
+                bufferSSE += decoder.decode();
+                if (bufferSSE.trim()) procesarEventoSSE(bufferSSE);
+
+                // Render definitivo al concluir el flujo de streaming
+                let textoFinal = limpiarTextoParaKatex(acumuladorTexto);
+                burbujaStream.innerHTML = DOMPurify.sanitize(marked(textoFinal));
+                pantalla.scrollTop = pantalla.scrollHeight;
+                burbujaStream.removeAttribute("id");
+
+                // Solo mostrar el simulador de filtro si la respuesta es específicamente sobre filtros/crossover
+                const respuestaMinuscula = acumuladorTexto.toLowerCase();
+                const esSobreFiltro = (
+                    respuestaMinuscula.includes("frecuencia de corte") ||
+                    respuestaMinuscula.includes("crossover") ||
+                    (respuestaMinuscula.includes("filtro") && respuestaMinuscula.includes("hz") && 
+                     (respuestaMinuscula.includes("pasabajos") || respuestaMinuscula.includes("pasaaltos") ||
+                      respuestaMinuscula.includes("lowpass") || respuestaMinuscula.includes("highpass") ||
+                      respuestaMinuscula.includes("db/oct")))
+                );
+                if (esSobreFiltro) {
+                    const matches = acumuladorTexto.match(/(\d+)\s*hz/i);
+                    const fcDetectada = matches ? parseInt(matches[1]) : 1000;
+                    if (fcDetectada >= 20 && fcDetectada <= 20000) {
+                        generarCanvasFiltro("butterworth2", fcDetectada);
+                    }
+                }
+
+            } catch (e) {
+                console.error("Error en streaming:", e);
+                if(e.message !== "Fallo la subida") {
+                    agregarBurbuja("Error", "Ocurrió un problema de red al streamear la respuesta.", "bot");
+                }
+            } finally {
+                // Desbloquear inputs al finalizar (con éxito o error)
+                inputMsg.disabled = false;
+                btnEnviar.disabled = false;
+                inputMsg.focus();
+            }
+        }
+
+        function agregarBurbuja(remitente, texto, tipo) {
+            const pantalla = document.getElementById("pantalla-mensajes");
+            const bloque = document.createElement("div");
+            bloque.classList.add("bloque-mensaje", tipo);
+
+            let textoProcesado = texto;
+            if (tipo === "bot") {
+                textoProcesado = limpiarTextoParaKatex(texto);
+            }
+
+            const contenidoFormateado = (tipo === "bot") 
+                ? DOMPurify.sanitize(marked(textoProcesado))
+                : escapeHTML(texto);
+
+            bloque.innerHTML = `
+                <div class="meta-info">${remitente}</div>
+                <div class="burbuja">${contenidoFormateado}</div>
+            `;
+            pantalla.appendChild(bloque);
+            pantalla.scrollTop = pantalla.scrollHeight;
+        }
+
+        function escapeHTML(str) {
+            return str.replace(/[&<>'"]/g, 
+                tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+            );
+        }
+
+        function calcularGananciaFiltro(hz, fCorte, tipo, orden, alineamiento) {
+            const relacion = hz / fCorte;
+            const pendiente = Math.max(1, orden);
+            let ganancia;
+
+            if (tipo === "highpass") {
+                ganancia = Math.pow(relacion, pendiente) / Math.sqrt(1 + Math.pow(relacion, 2 * pendiente));
+            } else if (tipo === "bandpass") {
+                const q = alineamiento === "bessel" ? 0.58 : alineamiento === "linkwitz" ? 0.5 : 0.707;
+                const ancho = Math.max(0.15, 1 / (q * 2));
+                ganancia = 1 / Math.sqrt(1 + Math.pow((relacion - 1 / relacion) / ancho, 2 * Math.ceil(pendiente / 2)));
+            } else if (tipo === "notch") {
+                const q = alineamiento === "bessel" ? 0.45 : alineamiento === "linkwitz" ? 0.6 : 0.707;
+                const rechazo = 1 / Math.sqrt(1 + Math.pow((relacion - 1 / relacion) * q, 2 * Math.ceil(pendiente / 2)));
+                ganancia = Math.max(0.01, 1 - rechazo);
+            } else {
+                ganancia = 1 / Math.sqrt(1 + Math.pow(relacion, 2 * pendiente));
+            }
+
+            if (alineamiento === "linkwitz" && (tipo === "lowpass" || tipo === "highpass")) {
+                ganancia = Math.pow(ganancia, 2);
+            }
+
+            const db = 20 * Math.log10(Math.max(ganancia, 0.0001));
+            return Math.max(db, -60);
+        }
+
+        function datosFiltro(fCorte, tipo, orden, alineamiento) {
+            const frecuencias = [];
+            const respuestaDB = [];
+            for (let f = 20; f <= 20000; f = f * 1.06) {
+                const hz = Math.round(f);
+                frecuencias.push(hz);
+                respuestaDB.push(calcularGananciaFiltro(hz, fCorte, tipo, orden, alineamiento));
+            }
+            return { frecuencias, respuestaDB };
+        }
+
+        function actualizarGraficoFiltro() {
+            if (!miGraficoAudio) return;
+            const fCorte = parseInt(document.getElementById("slider-fc").value);
+            const tipo = document.getElementById("select-tipo-filtro").value;
+            const orden = parseInt(document.getElementById("select-orden-filtro").value);
+            const alineamiento = document.getElementById("select-alineamiento-filtro").value;
+            const { frecuencias, respuestaDB } = datosFiltro(fCorte, tipo, orden, alineamiento);
+
+            document.getElementById("val-fc").innerText = fCorte + "Hz";
+            miGraficoAudio.data.labels = frecuencias;
+            miGraficoAudio.data.datasets[0].data = respuestaDB;
+            miGraficoAudio.data.datasets[0].label = `${tipo} ${orden}º orden (${alineamiento})`;
+            miGraficoAudio.update('none');
+        }
+
+        function generarCanvasFiltro(tipo = "lowpass", fCorte = 1000) {
+            const pantalla = document.getElementById("pantalla-mensajes");
+            const { frecuencias, respuestaDB } = datosFiltro(fCorte, tipo, 2, "butterworth");
+
+            let contenedor = document.getElementById("bloque-grafico-filtro");
+            if (!contenedor) {
+                contenedor = document.createElement("div");
+                contenedor.id = "bloque-grafico-filtro";
+                contenedor.className = "contenedor-grafico-audio";
+                contenedor.style.display = "block";
+                contenedor.innerHTML = `
+                    <h4 style="margin-bottom:10px; font-size:0.9rem; color:#10b981;">🎛️ Simulador de Filtro / Crossover</h4>
+                    <div class="controles-audio">
+                        <label>Tipo
+                            <select id="select-tipo-filtro">
+                                <option value="lowpass">Pasabajos</option>
+                                <option value="highpass">Pasaaltos</option>
+                                <option value="bandpass">Pasabanda</option>
+                                <option value="notch">Notch / Rechazo</option>
+                            </select>
+                        </label>
+                        <label>Orden
+                            <select id="select-orden-filtro">
+                                <option value="1">1º orden (6 dB/oct)</option>
+                                <option value="2" selected>2º orden (12 dB/oct)</option>
+                                <option value="4">4º orden (24 dB/oct)</option>
+                            </select>
+                        </label>
+                        <label>Alineamiento
+                            <select id="select-alineamiento-filtro">
+                                <option value="butterworth" selected>Butterworth</option>
+                                <option value="linkwitz">Linkwitz-Riley</option>
+                                <option value="bessel">Bessel</option>
+                            </select>
+                        </label>
+                        <label>Frecuencia de corte: <strong id="val-fc" style="color:white">${fCorte}Hz</strong>
+                            <input type="range" id="slider-fc" min="20" max="20000" value="${fCorte}">
+                        </label>
+                    </div>
+                    <div style="height:260px; width:100%;"><canvas id="canvasFiltroAudio"></canvas></div>
+                `;
+                pantalla.appendChild(contenedor);
+            }
+
+            document.getElementById("select-tipo-filtro").value = tipo === "butterworth2" ? "lowpass" : tipo;
+            document.getElementById("slider-fc").value = fCorte;
+            document.getElementById("val-fc").innerText = fCorte + "Hz";
+
+            const ctx = document.getElementById('canvasFiltroAudio').getContext('2d');
+            if (miGraficoAudio) miGraficoAudio.destroy();
+
+            miGraficoAudio = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: frecuencias,
+                    datasets: [{
+                        label: 'Magnitud (dB)',
+                        data: respuestaDB,
+                        borderColor: '#10b981',
+                        borderWidth: 2,
+                        pointRadius: 0,
+                        fill: false,
+                        tension: 0.1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            type: 'logarithmic',
+                            title: { display: true, text: 'Frecuencia (Hz)', color: '#9ca3af' },
+                            ticks: { color: '#6b7280', callback: value => [20, 100, 1000, 10000, 20000].includes(value) ? value + "Hz" : null }
+                        },
+                        y: {
+                            min: -60, max: 3,
+                            title: { display: true, text: 'Ganancia (dB)', color: '#9ca3af' },
+                            ticks: { color: '#6b7280' }
+                        }
+                    },
+                    plugins: { legend: { labels: { color: '#9ca3af' } } }
+                }
+            });
+
+            ["slider-fc", "select-tipo-filtro", "select-orden-filtro", "select-alineamiento-filtro"].forEach(id => {
+                document.getElementById(id).oninput = actualizarGraficoFiltro;
+                document.getElementById(id).onchange = actualizarGraficoFiltro;
+            });
+            actualizarGraficoFiltro();
+            pantalla.scrollTop = pantalla.scrollHeight;
+        }
+
+        // === CALCULADORA DE AMPLIFICADORES ===
+
+        function togglePanelAmp() {
+            const panel = document.getElementById("panel-amp");
+            const btn = document.getElementById("btn-toggle-amp");
+            const visible = panel.style.display !== "none";
+            panel.style.display = visible ? "none" : "block";
+            btn.style.borderColor = visible ? "" : "#10b981";
+            btn.style.color = visible ? "" : "#10b981";
+        }
+
+        async function calcularAmplificador() {
+            const topologia = document.getElementById("amp-topologia").value;
+            const transistor = document.getElementById("amp-transistor").value || "2N3055";
+            const vcc = parseFloat(document.getElementById("amp-vcc").value);
+            const potencia = parseFloat(document.getElementById("amp-potencia").value);
+            const rl = parseFloat(document.getElementById("amp-rl").value);
+
+            if (!vcc || !potencia || !rl) {
+                alert("Completá todos los campos antes de calcular.");
+                return;
+            }
+
+            const loader = document.getElementById("amp-loader");
+            const resultado = document.getElementById("amp-resultado");
+            loader.classList.add("visible");
+            resultado.classList.remove("visible");
+
+            try {
+                const resp = await fetch("/amplificador", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ topologia, transistor, vcc, potencia_w: potencia, impedancia_carga: rl })
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.detail || "Error del servidor");
+                }
+
+                const datos = await resp.json();
+
+                // SVG
+                document.getElementById("amp-svg").innerHTML = datos.svg;
+
+                // Punto de bias
+                const biasEl = document.getElementById("amp-bias");
+                biasEl.innerHTML = "";
+                for (const [clave, valor] of Object.entries(datos.punto_bias)) {
+                    biasEl.innerHTML += `
+                        <div class="amp-bias-card">
+                            <div class="bval">${valor}</div>
+                            <div class="blabel">${clave.replace(/_/g, " ")}</div>
+                        </div>`;
+                }
+
+                // Componentes
+                const compEl = document.getElementById("amp-componentes");
+                compEl.innerHTML = "";
+                for (const [clave, valor] of Object.entries(datos.componentes)) {
+                    compEl.innerHTML += `
+                        <div class="amp-chip">
+                            <span class="chip-label">${clave}:</span>
+                            <span class="chip-valor">${valor}</span>
+                        </div>`;
+                }
+
+                // Performance
+                const perfEl = document.getElementById("amp-performance");
+                perfEl.innerHTML = "";
+                for (const [clave, valor] of Object.entries(datos.performance)) {
+                    perfEl.innerHTML += `
+                        <div class="amp-chip">
+                            <span class="chip-label">${clave.replace(/_/g, " ")}:</span>
+                            <span class="chip-valor">${valor}</span>
+                        </div>`;
+                }
+
+                // Notas
+                const notasEl = document.getElementById("amp-notas");
+                notasEl.innerHTML = datos.notas.map(n => `<li>${escapeHTML(n)}</li>`).join("");
+
+                resultado.classList.add("visible");
+
+            } catch (e) {
+                alert("Error al calcular: " + e.message);
+            } finally {
+                loader.classList.remove("visible");
+            }
+        }
+
+        function compartirChatPorLink() {
+            if (!chatActivoId) {
+                alert("Primero selecciona o inicia una conversación.");
+                return;
+            }
+            const urlPublica = `${window.location.protocol}//${window.location.host}/share/${usuarioActivo}/${chatActivoId}`;
+            navigator.clipboard.writeText(urlPublica).then(() => {
+                alert(`¡Enlace copiado al portapapeles! 🚀\n\n${urlPublica}\n\n(Nota: Asegúrate de tener la ruta '/share' configurada en tu app.py para que el enlace público funcione)`);
+            }).catch(err => {
+                prompt("Copia tu enlace aquí:", urlPublica);
+            });
+        }
+    </script>
+</body>
+</html>

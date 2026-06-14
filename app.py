@@ -14,16 +14,23 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from google import genai
 from google.genai import types
 from openpyxl import load_workbook
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
 # Carga estricta de variables de entorno
 load_dotenv()
 
 app = FastAPI(title="Central de IA Premium - Backend Pro")
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
 
 # --- CONFIGURACIÓN DE CORS ---
 CORS_ALLOW_ORIGINS = [
@@ -78,7 +85,7 @@ class ChatRequest(BaseModel):
     usuario: str
     id_chat: str
     personalidad: str
-    mensaje: str
+    mensaje: str = Field(..., max_length=10000)  # límite de seguridad
     modelo_elegido: str = "gemini-2.5-flash-lite"
 
 
@@ -99,7 +106,7 @@ class AmpRequest(BaseModel):
 
 
 # --- CONFIGURACIÓN DE MODELOS ---
-MODELOS_DISPONIBLES = ["gemini-2.5-flash-lite"]
+MODELOS_DISPONIBLES = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
 
 # Máximo de mensajes de contexto enviados al modelo
 LIMITE_CONTEXTO = 30
@@ -150,10 +157,10 @@ def guardar_en_json_local(usuario: str, id_chat: str, mensaje_user: str, respues
 
 
 def formatear_sse_data(texto: str) -> str:
-    """Formatea texto arbitrario como evento SSE válido, incluso si contiene saltos de línea."""
+    """Formatea texto arbitrario como evento SSE válido, terminando con doble salto de línea."""
     texto = texto.replace("\r", "")
     lineas = texto.split("\n")
-    return "".join(f"data: {linea}\n" for linea in lineas) + "\n"
+    return "".join(f"data: {linea}\n" for linea in lineas) + "\n\n"
 
 
 def cargar_usuarios_validos() -> Dict[str, str]:
@@ -244,17 +251,13 @@ async def listar_chats(usuario: str, q: Optional[str] = Query(default=None)):
 
     for ruta in RUTA_HISTORIALES.glob(f"{prefijo}*.json"):
         nombre_chat = ruta.stem.removeprefix(prefijo)
-        # Excluir archivos de memoria que usan el mismo prefijo
         if nombre_chat == "memoria":
             continue
-        # Filtrar por búsqueda si se proporcionó un query
         if q:
             termino = q.lower()
-            # Buscar en el nombre del chat
             if termino in nombre_chat.lower():
                 chats_usuario.append(nombre_chat)
                 continue
-            # Buscar también dentro del contenido del historial
             try:
                 historial = cargar_historial_local(usuario, nombre_chat)
                 contenido_completo = " ".join(m.get("content", "") for m in historial).lower()
@@ -324,7 +327,7 @@ async def share_chat(usuario: str, id_chat: str):
 </head><body><h2>Conversación compartida</h2>{filas_html}</body></html>"""
 
 
-# 10. MOTOR DE CHAT CON STREAMING REAL (no bloquea el event loop)
+# 10. MOTOR DE CHAT CON STREAMING REAL
 @app.post("/chat")
 async def chat(req: ChatRequest):
     if client is None:
@@ -361,7 +364,6 @@ async def chat(req: ChatRequest):
     loop = asyncio.get_event_loop()
 
     def _llamar_gemini_en_hilo():
-        """Corre el streaming síncrono de Gemini en un thread separado."""
         try:
             response_stream = client.models.generate_content_stream(
                 model=req.modelo_elegido,
@@ -449,7 +451,7 @@ async def upload_file(file: UploadFile = File(...)):
 
 
 # ==============================================================================
-#  MÓDULO: CALCULADORA DE AMPLIFICADORES + SVG + BIAS
+#  MÓDULO: CALCULADORA DE AMPLIFICADORES + SVG + BIAS (con validación de división por cero)
 # ==============================================================================
 
 def _formato_resistencia(valor_ohm: float) -> str:
@@ -474,8 +476,13 @@ def _formato_capacitor(valor_f: float) -> str:
 
 def calcular_clase_a(vcc: float, p_out: float, rl: float, transistor: str) -> dict:
     """Amplificador Clase A con transistor BJT en emisor común."""
+    if rl <= 0 or vcc <= 0:
+        raise HTTPException(status_code=400, detail="Vcc y carga deben ser mayores a cero.")
+    
     vce_q = vcc / 2
     ic_q = vcc / (2 * rl)
+    if ic_q <= 0:
+        raise HTTPException(status_code=400, detail="La corriente de colector es cero o negativa. Ajuste Vcc o RL.")
     
     p_max_teorica = (vcc ** 2) / (8 * rl)
     eficiencia = 25.0
@@ -529,6 +536,9 @@ def calcular_clase_a(vcc: float, p_out: float, rl: float, transistor: str) -> di
 
 def calcular_clase_ab(vcc: float, p_out: float, rl: float, transistor: str) -> dict:
     """Amplificador Clase AB push-pull complementario."""
+    if rl <= 0 or p_out <= 0:
+        raise HTTPException(status_code=400, detail="Potencia y carga deben ser mayores a cero.")
+    
     v_pico = math.sqrt(2 * p_out * rl)
     vsat = 2.0
     vcc_minimo = v_pico + vsat
@@ -536,13 +546,16 @@ def calcular_clase_ab(vcc: float, p_out: float, rl: float, transistor: str) -> d
     
     i_pico = v_pico / rl
     iq = i_pico * 0.07
+    if iq <= 0:
+        raise HTTPException(status_code=400, detail="Corriente de polarización nula. Ajuste la potencia o carga.")
+    
     re = 0.33 if i_pico > 1 else 1.0
     v_bias = 1.4
     r_bias = v_bias / (iq * 10)
     eficiencia = 65.0
     
     pd_total = (vcc_usado * i_pico / math.pi) - p_out
-    pd_por_transistor = pd_total / 2
+    pd_por_transistor = max(0, pd_total / 2)
 
     return {
         "topologia": "Clase AB — Push-Pull Complementario",
@@ -566,7 +579,7 @@ def calcular_clase_ab(vcc: float, p_out: float, rl: float, transistor: str) -> d
             "Potencia_salida_W": round(p_out, 2),
             "Potencia_max_W": round((vcc_usado ** 2) / (2 * rl), 2),
             "Eficiencia_pct": eficiencia,
-            "Vcc_V": vcc_usado, # Se renombró para mantener consistencia con el front
+            "Vcc_V": vcc_usado,
             "Rl_ohm": rl,
         },
         "notas": [
@@ -742,13 +755,10 @@ def generar_svg_clase_ab(datos: dict) -> str:
 
 def generar_svg_amplificador(datos: dict) -> str:
     top = datos.get("topologia", "")
-    
-    # IMPORTANTE: El orden de validación aquí previene el error 500 al evaluar Clase AB primero
     if "Clase AB" in top:
         return generar_svg_clase_ab(datos)
     elif "Clase A" in top:
         return generar_svg_clase_a(datos)
-        
     return "<svg><text fill='white' x='10' y='20'>Topología no soportada aún</text></svg>"
 
 
@@ -757,7 +767,7 @@ def generar_svg_amplificador(datos: dict) -> str:
 @app.post("/amplificador")
 async def calcular_amplificador(req: AmpRequest):
     try:
-        if req.topologia == "clase_a" or req.topologia == "common_emitter":
+        if req.topologia in ("clase_a", "common_emitter"):
             datos = calcular_clase_a(req.vcc, req.potencia_w, req.impedancia_carga, req.transistor)
         elif req.topologia == "clase_ab":
             datos = calcular_clase_ab(req.vcc, req.potencia_w, req.impedancia_carga, req.transistor)
@@ -768,6 +778,10 @@ async def calcular_amplificador(req: AmpRequest):
         datos["svg"] = svg_render
         
         return JSONResponse(content=datos)
+    except HTTPException:
+        raise
+    except ZeroDivisionError as e:
+        raise HTTPException(status_code=400, detail=f"División por cero en el cálculo: {str(e)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en cálculo: {str(e)}")
 
