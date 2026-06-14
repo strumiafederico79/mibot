@@ -532,6 +532,15 @@
             resize: vertical;
             margin-bottom: 8px;
         }
+        .admin-box { display: none; border-color: rgba(251,191,36,0.35); }
+        .admin-lista { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; max-height: 150px; overflow-y: auto; }
+        .admin-user-row { display: flex; justify-content: space-between; gap: 8px; font-size: 0.75rem; color: var(--texto-secundario); border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 5px; }
+        .tool-panel { display: none; border: 1px solid var(--borde); border-radius: 12px; padding: 14px; margin-bottom: 14px; background: rgba(16,185,129,0.04); }
+        .tool-panel.visible { display: block; }
+        .tool-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 10px; margin: 10px 0; }
+        .tool-grid label { font-size: 0.78rem; color: var(--texto-secundario); }
+        .tool-grid input, .tool-grid select { width: 100%; margin-top: 5px; background: var(--bg-main); color: var(--texto-principal); border: 1px solid var(--borde); border-radius: 7px; padding: 7px; }
+        .tool-output { white-space: pre-wrap; color: var(--texto-principal); background: rgba(0,0,0,0.22); border-radius: 8px; padding: 10px; font-size: 0.85rem; }
         .mini-actions { display: flex; gap: 6px; flex-wrap: wrap; }
         .mini-actions button, .chat-actions button {
             border: 1px solid var(--borde);
@@ -596,6 +605,18 @@
                     <button onclick="borrarMemoria()">Borrar</button>
                 </div>
             </div>
+
+            <div class="memoria-box admin-box" id="admin-box">
+                <h4>Panel admin</h4>
+                <input class="input-busqueda-chat" id="admin-usuario" placeholder="usuario">
+                <input class="input-busqueda-chat" id="admin-password" placeholder="password">
+                <select class="input-busqueda-chat" id="admin-rol"><option value="usuario">usuario</option><option value="admin">admin</option></select>
+                <div class="mini-actions">
+                    <button onclick="guardarUsuarioAdmin()">Guardar usuario</button>
+                    <button onclick="cargarUsuariosAdmin()">Actualizar</button>
+                </div>
+                <div class="admin-lista" id="admin-lista"></div>
+            </div>
             
             <div class="info-usuario-footer">
                 <span id="txt-usuario-activo">User: -</span>
@@ -624,6 +645,7 @@
                     <button onclick="exportarChat('json')">⬇️ JSON</button>
                     <button onclick="compartirChatPorLink()">🔗 Compartir</button>
                     <button onclick="togglePanelAmp()" id="btn-toggle-amp" title="Calculadora de Amplificadores">🔌 Amp</button>
+                    <button onclick="togglePanelAudio()" id="btn-toggle-audio" title="Herramientas Audio/Electrónica">🎚️ Audio</button>
                     <button onclick="document.body.classList.toggle('modo-consola')">🌓 Modo Consola</button>
                 </div>                    
             </div>
@@ -633,6 +655,29 @@
                     <div class="meta-info">Sistema</div>
                     <div class="burbuja">Bienvenido a tu entorno privado. Selecciona un chat del panel lateral o inicia uno nuevo para interactuar con la IA.</div>
                 </div>
+            </div>
+
+            <!-- PANEL HERRAMIENTAS AUDIO/ELECTRÓNICA -->
+            <div class="tool-panel" id="panel-audio" style="max-width:840px; align-self:center; width:100%; margin: 0 20px;">
+                <h4>🎚️ Herramientas técnicas de audio/electrónica</h4>
+                <div class="tool-grid">
+                    <label>Herramienta
+                        <select id="audio-herramienta" onchange="actualizarFormularioAudio()">
+                            <option value="crossover">Crossover pasivo</option>
+                            <option value="caja_sellada">Caja sellada</option>
+                            <option value="impedancia_paralelo">Impedancias en paralelo</option>
+                        </select>
+                    </label>
+                    <label class="audio-crossover">Frecuencia corte (Hz)<input type="number" id="audio-frecuencia" value="2500"></label>
+                    <label class="audio-crossover">Impedancia (Ω)<input type="number" id="audio-impedancia" value="8"></label>
+                    <label class="audio-crossover">Orden<select id="audio-orden"><option value="1">1º orden</option><option value="2">2º orden</option></select></label>
+                    <label class="audio-caja">Volumen caja (L)<input type="number" id="audio-volumen" value="35"></label>
+                    <label class="audio-caja">Vas driver (L)<input type="number" id="audio-vas" value="70"></label>
+                    <label class="audio-caja">Qts<input type="number" id="audio-qts" value="0.38" step="0.01"></label>
+                    <label class="audio-paralelo">Impedancias separadas por coma<input type="text" id="audio-impedancias" value="8,8"></label>
+                </div>
+                <button class="btn-calcular-amp" onclick="calcularHerramientaAudio()">🧮 Calcular herramienta</button>
+                <div class="tool-output" id="audio-output">Elegí una herramienta y calculá.</div>
             </div>
 
             <!-- PANEL CALCULADORA DE AMPLIFICADORES -->
@@ -713,6 +758,7 @@
 
     <script>
         let usuarioActivo = "";
+        let usuarioRol = "usuario";
         let chatActivoId = "chat_general";
         let archivoParaSubir = null;
         let miGraficoAudio = null;
@@ -764,20 +810,55 @@
                 if (response.ok) {
                     const data = await response.json();
                     usuarioActivo = data.usuario;
+                    usuarioRol = data.rol || "usuario";
                     
                     document.getElementById("login-screen").style.display = "none";
                     document.getElementById("app-container").style.display = "flex";
-                    document.getElementById("txt-usuario-activo").innerText = `User: ${usuarioActivo}`;
+                    document.getElementById("txt-usuario-activo").innerText = `User: ${usuarioActivo} (${usuarioRol})`;
+                    document.getElementById("admin-box").style.display = usuarioRol === "admin" ? "block" : "none";
                     
                     await cargarModelos();
                     await cargarMemoria();
                     await cargarListaHistoriales();
+                    if (usuarioRol === "admin") await cargarUsuariosAdmin();
                 } else {
                     errorDiv.style.display = "block";
                 }
             } catch (e) {
                 alert("Error de conexión con el backend");
             }
+        }
+
+        async function cargarUsuariosAdmin() {
+            const lista = document.getElementById("admin-lista");
+            const response = await fetch(`/admin/usuarios?admin=${encodeURIComponent(usuarioActivo)}`);
+            if (!response.ok) { lista.innerHTML = "No se pudo cargar usuarios"; return; }
+            const data = await response.json();
+            lista.innerHTML = data.usuarios.map(u => `
+                <div class="admin-user-row">
+                    <span>${escapeHTML(u.usuario)} · ${escapeHTML(u.rol)} · ${u.activo ? "activo" : "inactivo"}</span>
+                    <button onclick="borrarUsuarioAdmin('${u.usuario}')">🗑️</button>
+                </div>`).join("");
+        }
+
+        async function guardarUsuarioAdmin() {
+            const usuario = document.getElementById("admin-usuario").value.trim();
+            const password = document.getElementById("admin-password").value.trim();
+            const rol = document.getElementById("admin-rol").value;
+            if (!usuario || !password) { alert("Completá usuario y password."); return; }
+            const response = await fetch(`/admin/usuarios/${encodeURIComponent(usuario)}?admin=${encodeURIComponent(usuarioActivo)}`, {
+                method: "PUT", headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ password, rol, activo: true })
+            });
+            alert(response.ok ? "Usuario guardado." : "No se pudo guardar el usuario.");
+            if (response.ok) cargarUsuariosAdmin();
+        }
+
+        async function borrarUsuarioAdmin(usuario) {
+            if (!confirm(`¿Borrar usuario ${usuario}?`)) return;
+            const response = await fetch(`/admin/usuarios/${encodeURIComponent(usuario)}?admin=${encodeURIComponent(usuarioActivo)}`, { method: "DELETE" });
+            alert(response.ok ? "Usuario borrado." : "No se pudo borrar el usuario.");
+            if (response.ok) cargarUsuariosAdmin();
         }
 
         async function cargarModelos() {
@@ -1331,6 +1412,48 @@
             });
             actualizarGraficoFiltro();
             pantalla.scrollTop = pantalla.scrollHeight;
+        }
+
+        // === HERRAMIENTAS AUDIO/ELECTRÓNICA ===
+
+        function togglePanelAudio() {
+            const panel = document.getElementById("panel-audio");
+            panel.classList.toggle("visible");
+            actualizarFormularioAudio();
+        }
+
+        function actualizarFormularioAudio() {
+            const herramienta = document.getElementById("audio-herramienta").value;
+            document.querySelectorAll(".audio-crossover").forEach(el => el.style.display = herramienta === "crossover" ? "block" : "none");
+            document.querySelectorAll(".audio-caja").forEach(el => el.style.display = herramienta === "caja_sellada" ? "block" : "none");
+            document.querySelectorAll(".audio-paralelo").forEach(el => el.style.display = herramienta === "impedancia_paralelo" ? "block" : "none");
+        }
+
+        async function calcularHerramientaAudio() {
+            const herramienta = document.getElementById("audio-herramienta").value;
+            const payload = { herramienta };
+            if (herramienta === "crossover") {
+                payload.frecuencia_hz = parseFloat(document.getElementById("audio-frecuencia").value);
+                payload.impedancia_ohm = parseFloat(document.getElementById("audio-impedancia").value);
+                payload.orden = parseInt(document.getElementById("audio-orden").value, 10);
+            } else if (herramienta === "caja_sellada") {
+                payload.volumen_litros = parseFloat(document.getElementById("audio-volumen").value);
+                payload.vas_litros = parseFloat(document.getElementById("audio-vas").value);
+                payload.qts = parseFloat(document.getElementById("audio-qts").value);
+            } else {
+                payload.impedancias_ohm = document.getElementById("audio-impedancias").value.split(",").map(v => parseFloat(v.trim())).filter(Boolean);
+            }
+            const resp = await fetch("/herramientas/audio", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+            const out = document.getElementById("audio-output");
+            if (!resp.ok) { const err = await resp.json(); out.textContent = err.detail || "Error"; return; }
+            const data = await resp.json();
+            out.textContent = `${data.herramienta}
+
+Componentes / resultados:
+${Object.entries(data.componentes).map(([k,v]) => `• ${k}: ${v}`).join("\n")}
+
+Notas:
+${data.notas.map(n => `• ${n}`).join("\n")}`;
         }
 
         // === CALCULADORA DE AMPLIFICADORES ===
