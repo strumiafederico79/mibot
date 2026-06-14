@@ -3,10 +3,12 @@ import json
 import os
 import re
 import math
+import html
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from io import BytesIO
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import uvicorn
 from docx import Document
@@ -16,12 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from google import genai
 from google.genai import types
 from openpyxl import load_workbook
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pypdf import PdfReader
 
 # Carga estricta de variables de entorno
@@ -77,32 +78,54 @@ personalidades = {
 
 # --- MODELOS DE DATOS DE ENTRADA (PYDANTIC) ---
 class LoginRequest(BaseModel):
-    usuario: str
-    password: str
+    usuario: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
 
 
 class ChatRequest(BaseModel):
-    usuario: str
-    id_chat: str
-    personalidad: str
+    usuario: str = Field(..., min_length=1, max_length=100)
+    id_chat: str = Field(..., min_length=1, max_length=100)
+    personalidad: str = Field(..., min_length=1, max_length=50)
     mensaje: str = Field(..., max_length=10000)  # límite de seguridad
     modelo_elegido: str = "gemini-2.5-flash-lite"
 
 
 class MemoriaRequest(BaseModel):
-    memoria: str
+    memoria: str = Field(default="", max_length=20000)
 
 
 class RenombrarChatRequest(BaseModel):
-    nuevo_nombre: str
+    nuevo_nombre: str = Field(..., min_length=1, max_length=100)
+
+
+class AdminUsuarioRequest(BaseModel):
+    password: str = Field(..., min_length=4, max_length=200)
+    rol: str = Field(default="usuario", pattern="^(admin|usuario)$")
+    activo: bool = True
+
+
+class AudioToolRequest(BaseModel):
+    herramienta: str = Field(..., pattern="^(crossover|caja_sellada|impedancia_paralelo)$")
+    frecuencia_hz: Optional[float] = Field(default=None, gt=0, le=100000)
+    impedancia_ohm: Optional[float] = Field(default=None, gt=0, le=100000)
+    orden: int = Field(default=1, ge=1, le=2)
+    volumen_litros: Optional[float] = Field(default=None, gt=0, le=10000)
+    vas_litros: Optional[float] = Field(default=None, gt=0, le=10000)
+    qts: Optional[float] = Field(default=None, gt=0, le=10)
+    impedancias_ohm: Optional[List[float]] = None
 
 
 class AmpRequest(BaseModel):
-    topologia: str          # "clase_a", "clase_ab", "common_emitter"
-    vcc: float              # Tensión de alimentación (V)
-    potencia_w: float       # Potencia de salida deseada (W)
-    impedancia_carga: float # Impedancia del parlante (Ω)
-    transistor: str = "2N3055"  # Transistor sugerido
+    topologia: str = Field(..., min_length=1, max_length=50)  # "clase_a", "clase_ab", "common_emitter"
+    vcc: float = Field(..., gt=0, le=1000)              # Tensión de alimentación (V)
+    potencia_w: float = Field(..., ge=0, le=100000)       # Potencia de salida deseada (W)
+    impedancia_carga: float = Field(..., gt=0, le=100000) # Impedancia del parlante (Ω)
+    transistor: str = Field(default="2N3055", min_length=1, max_length=80)  # Transistor sugerido
+
+    @field_validator("topologia")
+    @classmethod
+    def normalizar_topologia(cls, valor: str) -> str:
+        return valor.strip().lower()
 
 
 # --- CONFIGURACIÓN DE MODELOS ---
@@ -110,12 +133,14 @@ MODELOS_DISPONIBLES = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
 
 # Máximo de mensajes de contexto enviados al modelo
 LIMITE_CONTEXTO = 30
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 # --- PERSISTENCIA LOCAL (CARPETA DE HISTORIALES) ---
 RUTA_BASE = Path(__file__).resolve().parent
 RUTA_HISTORIALES = RUTA_BASE / "historiales"
 RUTA_HISTORIALES.mkdir(exist_ok=True)
 IDENTIFICADOR_SEGURO = re.compile(r"[^a-zA-Z0-9_-]")
+_historial_lock = Lock()
 
 
 def normalizar_identificador(valor: str, campo: str) -> str:
@@ -149,11 +174,14 @@ def cargar_historial_local(usuario: str, id_chat: str) -> List[Dict[str, str]]:
 
 def guardar_en_json_local(usuario: str, id_chat: str, mensaje_user: str, respuesta_bot: str) -> None:
     ruta = obtener_ruta_json(usuario, id_chat)
-    historial = cargar_historial_local(usuario, id_chat)
-    historial.append({"role": "user", "content": mensaje_user})
-    historial.append({"role": "assistant", "content": respuesta_bot})
-    with ruta.open("w", encoding="utf-8") as f:
-        json.dump(historial, f, ensure_ascii=False, indent=4)
+    with _historial_lock:
+        historial = cargar_historial_local(usuario, id_chat)
+        historial.append({"role": "user", "content": mensaje_user})
+        historial.append({"role": "assistant", "content": respuesta_bot})
+        ruta_temporal = ruta.with_suffix(".json.tmp")
+        with ruta_temporal.open("w", encoding="utf-8") as f:
+            json.dump(historial, f, ensure_ascii=False, indent=4)
+        ruta_temporal.replace(ruta)
 
 
 def formatear_sse_data(texto: str) -> str:
@@ -163,19 +191,50 @@ def formatear_sse_data(texto: str) -> str:
     return "".join(f"data: {linea}\n" for linea in lineas) + "\n\n"
 
 
-def cargar_usuarios_validos() -> Dict[str, str]:
-    ruta_usuarios = RUTA_BASE / "usuarios.json"
+def obtener_ruta_usuarios() -> Path:
+    return RUTA_BASE / "usuarios.json"
+
+
+def cargar_config_usuarios() -> Dict[str, Dict[str, Any]]:
+    ruta_usuarios = obtener_ruta_usuarios()
     if not ruta_usuarios.exists():
         return {}
     try:
         data = json.loads(ruta_usuarios.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
-    usuarios = {}
+
+    usuarios: Dict[str, Dict[str, Any]] = {}
     for usuario, config in data.items():
         if isinstance(config, dict) and isinstance(config.get("password"), str):
-            usuarios[usuario] = config["password"]
+            usuarios[usuario] = {
+                "password": config["password"],
+                "rol": config.get("rol", "usuario"),
+                "activo": bool(config.get("activo", True)),
+            }
     return usuarios
+
+
+def guardar_config_usuarios(usuarios: Dict[str, Dict[str, Any]]) -> None:
+    ruta_usuarios = obtener_ruta_usuarios()
+    ruta_temporal = ruta_usuarios.with_suffix(".json.tmp")
+    with ruta_temporal.open("w", encoding="utf-8") as f:
+        json.dump(usuarios, f, ensure_ascii=False, indent=2)
+    ruta_temporal.replace(ruta_usuarios)
+
+
+def cargar_usuarios_validos() -> Dict[str, str]:
+    return {
+        usuario: config["password"]
+        for usuario, config in cargar_config_usuarios().items()
+        if config.get("activo", True)
+    }
+
+
+def validar_admin(usuario: str) -> None:
+    config = cargar_config_usuarios().get(usuario)
+    if not config or config.get("rol") != "admin" or not config.get("activo", True):
+        raise HTTPException(status_code=403, detail="Se requiere un usuario administrador activo")
 
 
 # --- FUNCIONES DE MEMORIA ---
@@ -210,13 +269,51 @@ async def serve_index():
 # 2. LOGIN
 @app.post("/login")
 async def login(req: LoginRequest):
-    usuarios_validos = cargar_usuarios_validos()
-    if req.usuario in usuarios_validos and usuarios_validos[req.usuario] == req.password:
-        return {"status": "success", "usuario": req.usuario}
+    usuarios_config = cargar_config_usuarios()
+    config = usuarios_config.get(req.usuario)
+    if config and config.get("activo", True) and config.get("password") == req.password:
+        return {"status": "success", "usuario": req.usuario, "rol": config.get("rol", "usuario")}
     raise HTTPException(status_code=401, detail="Credenciales incorrectas")
 
 
-# 3. MODELOS
+# 3. ADMINISTRACIÓN DE USUARIOS
+@app.get("/admin/usuarios")
+async def listar_usuarios_admin(admin: str = Query(...)):
+    validar_admin(admin)
+    usuarios = cargar_config_usuarios()
+    return {
+        "usuarios": [
+            {"usuario": usuario, "rol": config.get("rol", "usuario"), "activo": config.get("activo", True)}
+            for usuario, config in sorted(usuarios.items())
+        ]
+    }
+
+
+@app.put("/admin/usuarios/{usuario}")
+async def guardar_usuario_admin(usuario: str, req: AdminUsuarioRequest, admin: str = Query(...)):
+    validar_admin(admin)
+    usuario_seguro = normalizar_identificador(usuario, "usuario")
+    usuarios = cargar_config_usuarios()
+    usuarios[usuario_seguro] = {"password": req.password, "rol": req.rol, "activo": req.activo}
+    guardar_config_usuarios(usuarios)
+    return {"status": "success", "usuario": usuario_seguro, "rol": req.rol, "activo": req.activo}
+
+
+@app.delete("/admin/usuarios/{usuario}")
+async def borrar_usuario_admin(usuario: str, admin: str = Query(...)):
+    validar_admin(admin)
+    usuario_seguro = normalizar_identificador(usuario, "usuario")
+    if usuario_seguro == admin:
+        raise HTTPException(status_code=400, detail="No podés borrar tu propio usuario administrador")
+    usuarios = cargar_config_usuarios()
+    if usuario_seguro not in usuarios:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+    del usuarios[usuario_seguro]
+    guardar_config_usuarios(usuarios)
+    return {"status": "success"}
+
+
+# 4. MODELOS
 @app.get("/modelos")
 async def listar_modelos():
     return {"modelos": MODELOS_DISPONIBLES}
@@ -315,7 +412,7 @@ async def share_chat(usuario: str, id_chat: str):
     filas_html = ""
     for m in historial:
         rol = m.get("role", "")
-        contenido = m.get("content", "").replace("<", "&lt;").replace(">", "&gt;")
+        contenido = html.escape(str(m.get("content", "")))
         label = "Tú" if rol == "user" else "IA"
         color = "#3b82f6" if rol == "user" else "#10b981"
         filas_html += f'<p><strong style="color:{color}">{label}:</strong> {contenido}</p><hr>'
@@ -335,6 +432,9 @@ async def chat(req: ChatRequest):
             status_code=503,
             detail="No se encontró la variable GEMINI_API_KEY configurada en el entorno",
         )
+
+    if req.modelo_elegido not in MODELOS_DISPONIBLES:
+        raise HTTPException(status_code=400, detail="Modelo no soportado")
 
     historial_completo = cargar_historial_local(req.usuario, req.id_chat)
     historial_recortado = historial_completo[-LIMITE_CONTEXTO:]
@@ -361,7 +461,7 @@ async def chat(req: ChatRequest):
         )
 
     queue: asyncio.Queue = asyncio.Queue()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _llamar_gemini_en_hilo():
         try:
@@ -417,18 +517,26 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         if nombre_archivo.endswith((".txt", ".csv", ".json", ".py", ".html", ".css", ".md")):
-            bytes_archivo = await file.read()
+            bytes_archivo = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(bytes_archivo) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="El archivo supera el límite de 10 MB")
             contenido_extraido = bytes_archivo.decode("utf-8", errors="ignore")
         elif nombre_archivo.endswith(".pdf"):
-            data = await file.read()
+            data = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="El archivo supera el límite de 10 MB")
             pdf = PdfReader(BytesIO(data))
             contenido_extraido = "\n".join([(p.extract_text() or "") for p in pdf.pages])
         elif nombre_archivo.endswith(".docx"):
-            data = await file.read()
+            data = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="El archivo supera el límite de 10 MB")
             doc = Document(BytesIO(data))
             contenido_extraido = "\n".join(p.text for p in doc.paragraphs)
         elif nombre_archivo.endswith(".xlsx"):
-            data = await file.read()
+            data = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="El archivo supera el límite de 10 MB")
             wb = load_workbook(BytesIO(data), data_only=True)
             filas = []
             for ws in wb.worksheets:
@@ -760,6 +868,70 @@ def generar_svg_amplificador(datos: dict) -> str:
     elif "Clase A" in top:
         return generar_svg_clase_a(datos)
     return "<svg><text fill='white' x='10' y='20'>Topología no soportada aún</text></svg>"
+
+
+def calcular_crossover(frecuencia_hz: float, impedancia_ohm: float, orden: int) -> dict:
+    if orden == 1:
+        capacitor = 1 / (2 * math.pi * frecuencia_hz * impedancia_ohm)
+        inductor = impedancia_ohm / (2 * math.pi * frecuencia_hz)
+        componentes = {"C_pasa_altos": _formato_capacitor(capacitor), "L_pasa_bajos": f"{round(inductor * 1000, 2)} mH"}
+    else:
+        capacitor = 1 / (2 * math.pi * frecuencia_hz * impedancia_ohm * math.sqrt(2))
+        inductor = impedancia_ohm / (2 * math.pi * frecuencia_hz * math.sqrt(2))
+        componentes = {"C_por_rama": _formato_capacitor(capacitor), "L_por_rama": f"{round(inductor * 1000, 2)} mH"}
+    return {
+        "herramienta": "Crossover pasivo",
+        "componentes": componentes,
+        "notas": [
+            f"Frecuencia de corte: {round(frecuencia_hz, 1)} Hz",
+            f"Impedancia nominal usada: {round(impedancia_ohm, 2)} Ω",
+            "Usar componentes con tolerancia baja y potencia adecuada para audio.",
+        ],
+    }
+
+
+def calcular_caja_sellada(volumen_litros: float, vas_litros: float, qts: float) -> dict:
+    qtc = qts * math.sqrt((vas_litros / volumen_litros) + 1)
+    relacion = vas_litros / ((qtc / qts) ** 2 - 1) if qtc > qts else volumen_litros
+    return {
+        "herramienta": "Caja sellada",
+        "componentes": {"Qtc_estimado": round(qtc, 3), "Vb_confirmado": f"{round(volumen_litros, 2)} L", "Vb_para_mismo_Qtc": f"{round(relacion, 2)} L"},
+        "notas": [
+            "Qtc cercano a 0.707 suele ser una alineación Butterworth equilibrada.",
+            "Valores mayores a 1.0 pueden sonar con pico/resonancia marcada.",
+            "Verificar desplazamiento del driver, relleno interno y pérdidas reales de la caja.",
+        ],
+    }
+
+
+def calcular_impedancia_paralelo(impedancias_ohm: List[float]) -> dict:
+    impedancias = [z for z in impedancias_ohm if z > 0]
+    if not impedancias:
+        raise HTTPException(status_code=400, detail="Ingresá al menos una impedancia positiva")
+    equivalente = 1 / sum(1 / z for z in impedancias)
+    return {
+        "herramienta": "Impedancia en paralelo",
+        "componentes": {"Z_equivalente": f"{round(equivalente, 3)} Ω", "Cargas": ", ".join(f"{z} Ω" for z in impedancias)},
+        "notas": [
+            "Verificar que el amplificador soporte la impedancia equivalente calculada.",
+            "En parlantes reales, la impedancia cambia con la frecuencia.",
+        ],
+    }
+
+
+@app.post("/herramientas/audio")
+async def calcular_herramienta_audio(req: AudioToolRequest):
+    if req.herramienta == "crossover":
+        if req.frecuencia_hz is None or req.impedancia_ohm is None:
+            raise HTTPException(status_code=400, detail="Frecuencia e impedancia son obligatorias")
+        return calcular_crossover(req.frecuencia_hz, req.impedancia_ohm, req.orden)
+    if req.herramienta == "caja_sellada":
+        if req.volumen_litros is None or req.vas_litros is None or req.qts is None:
+            raise HTTPException(status_code=400, detail="Volumen, Vas y Qts son obligatorios")
+        return calcular_caja_sellada(req.volumen_litros, req.vas_litros, req.qts)
+    if req.herramienta == "impedancia_paralelo":
+        return calcular_impedancia_paralelo(req.impedancias_ohm or [])
+    raise HTTPException(status_code=400, detail="Herramienta no soportada")
 
 
 # --- ENDPOINT PRINCIPAL ---

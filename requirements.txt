@@ -17,3 +17,6 @@ pypdf>=4.2.0              # Lectura de .pdf
 python-dotenv>=1.0.1      # Carga de .env
 python-multipart>=0.0.9   # Necesario para File upload en FastAPI
 pydantic>=2.7.0           # Validación de modelos (incluido con FastAPI)
+
+# Rate limiting
+slowapi>=0.1.9

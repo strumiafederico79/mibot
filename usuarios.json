@@ -1,4 +1,4 @@
 {
-  "fede": { "password": "fedefede" },
-  "clara": { "password": "otro_password" }
+  "fede": { "password": "fedefede", "rol": "admin", "activo": true },
+  "clara": { "password": "otro_password", "rol": "usuario", "activo": true }
 }
