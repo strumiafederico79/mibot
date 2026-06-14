@@ -566,6 +566,7 @@
             padding: 7px;
         }
     </style>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
 </head>
 <body>
 
@@ -613,7 +614,8 @@
                         <option value="copywriter">✍️ Copywriter / Contenido</option>
                     </select>
                     <select id="select-modelo">
-                        <option value="gemini-2.5-flash">Gemma 4 31B</option>
+                        <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite</option>
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                     </select>
                 </div>
                 <div class="herramientas-chat">
@@ -717,7 +719,7 @@
         let busquedaActual = "";
 
         // Configuración moderna de Marked.js con Highlight.js y KaTeX
-        // IMPORTANTE: markedKatexExtension debe ir PRIMERO
+        // markedKatexExtension debe ir PRIMERO
         marked.use(markedKatexExtension({
             throwOnError: false,
             nonStandard: true,
@@ -1099,7 +1101,7 @@
                     const ahora = Date.now();
                     if (ahora - ultimaActualizacion > TASA_REFRESCO) {
                         let textoProcesado = limpiarTextoParaKatex(acumuladorTexto);
-                        burbujaStream.innerHTML = marked.parse(textoProcesado);
+                        burbujaStream.innerHTML = DOMPurify.sanitize(marked(textoProcesado));
                         pantalla.scrollTop = pantalla.scrollHeight;
                         ultimaActualizacion = ahora;
                     }
@@ -1123,14 +1125,13 @@
 
                 // Render definitivo al concluir el flujo de streaming
                 let textoFinal = limpiarTextoParaKatex(acumuladorTexto);
-                burbujaStream.innerHTML = marked.parse(textoFinal);
+                burbujaStream.innerHTML = DOMPurify.sanitize(marked(textoFinal));
                 pantalla.scrollTop = pantalla.scrollHeight;
                 burbujaStream.removeAttribute("id");
 
                 // Solo mostrar el simulador de filtro si la respuesta es específicamente sobre filtros/crossover
-                // y el usuario preguntó sobre eso (evitar falsos positivos por menciones de Hz)
                 const respuestaMinuscula = acumuladorTexto.toLowerCase();
-                const esSobreFilro = (
+                const esSobreFiltro = (
                     respuestaMinuscula.includes("frecuencia de corte") ||
                     respuestaMinuscula.includes("crossover") ||
                     (respuestaMinuscula.includes("filtro") && respuestaMinuscula.includes("hz") && 
@@ -1138,7 +1139,7 @@
                       respuestaMinuscula.includes("lowpass") || respuestaMinuscula.includes("highpass") ||
                       respuestaMinuscula.includes("db/oct")))
                 );
-                if (esSobreFilro) {
+                if (esSobreFiltro) {
                     const matches = acumuladorTexto.match(/(\d+)\s*hz/i);
                     const fcDetectada = matches ? parseInt(matches[1]) : 1000;
                     if (fcDetectada >= 20 && fcDetectada <= 20000) {
@@ -1169,7 +1170,9 @@
                 textoProcesado = limpiarTextoParaKatex(texto);
             }
 
-            const contenidoFormateado = (tipo === "bot") ? marked.parse(textoProcesado) : escapeHTML(texto);
+            const contenidoFormateado = (tipo === "bot") 
+                ? DOMPurify.sanitize(marked(textoProcesado))
+                : escapeHTML(texto);
 
             bloque.innerHTML = `
                 <div class="meta-info">${remitente}</div>
@@ -1224,6 +1227,7 @@
         }
 
         function actualizarGraficoFiltro() {
+            if (!miGraficoAudio) return;
             const fCorte = parseInt(document.getElementById("slider-fc").value);
             const tipo = document.getElementById("select-tipo-filtro").value;
             const orden = parseInt(document.getElementById("select-orden-filtro").value);
@@ -1369,10 +1373,10 @@
                     throw new Error(err.detail || "Error del servidor");
                 }
 
-                const { datos, svg } = await resp.json();
+                const datos = await resp.json();
 
                 // SVG
-                document.getElementById("amp-svg").innerHTML = svg;
+                document.getElementById("amp-svg").innerHTML = datos.svg;
 
                 // Punto de bias
                 const biasEl = document.getElementById("amp-bias");
@@ -1425,7 +1429,6 @@
                 alert("Primero selecciona o inicia una conversación.");
                 return;
             }
-            // Mantiene la funcionalidad visual de copiar al portapapeles
             const urlPublica = `${window.location.protocol}//${window.location.host}/share/${usuarioActivo}/${chatActivoId}`;
             navigator.clipboard.writeText(urlPublica).then(() => {
                 alert(`¡Enlace copiado al portapapeles! 🚀\n\n${urlPublica}\n\n(Nota: Asegúrate de tener la ruta '/share' configurada en tu app.py para que el enlace público funcione)`);
