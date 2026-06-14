@@ -3,7 +3,9 @@ import json
 import os
 import re
 import math
+import html
 from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 from io import BytesIO
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -16,12 +18,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from google import genai
 from google.genai import types
 from openpyxl import load_workbook
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pypdf import PdfReader
 
 # Carga estricta de variables de entorno
@@ -77,32 +78,37 @@ personalidades = {
 
 # --- MODELOS DE DATOS DE ENTRADA (PYDANTIC) ---
 class LoginRequest(BaseModel):
-    usuario: str
-    password: str
+    usuario: str = Field(..., min_length=1, max_length=100)
+    password: str = Field(..., min_length=1, max_length=200)
 
 
 class ChatRequest(BaseModel):
-    usuario: str
-    id_chat: str
-    personalidad: str
+    usuario: str = Field(..., min_length=1, max_length=100)
+    id_chat: str = Field(..., min_length=1, max_length=100)
+    personalidad: str = Field(..., min_length=1, max_length=50)
     mensaje: str = Field(..., max_length=10000)  # límite de seguridad
     modelo_elegido: str = "gemini-2.5-flash-lite"
 
 
 class MemoriaRequest(BaseModel):
-    memoria: str
+    memoria: str = Field(default="", max_length=20000)
 
 
 class RenombrarChatRequest(BaseModel):
-    nuevo_nombre: str
+    nuevo_nombre: str = Field(..., min_length=1, max_length=100)
 
 
 class AmpRequest(BaseModel):
-    topologia: str          # "clase_a", "clase_ab", "common_emitter"
-    vcc: float              # Tensión de alimentación (V)
-    potencia_w: float       # Potencia de salida deseada (W)
-    impedancia_carga: float # Impedancia del parlante (Ω)
-    transistor: str = "2N3055"  # Transistor sugerido
+    topologia: str = Field(..., min_length=1, max_length=50)  # "clase_a", "clase_ab", "common_emitter"
+    vcc: float = Field(..., gt=0, le=1000)              # Tensión de alimentación (V)
+    potencia_w: float = Field(..., ge=0, le=100000)       # Potencia de salida deseada (W)
+    impedancia_carga: float = Field(..., gt=0, le=100000) # Impedancia del parlante (Ω)
+    transistor: str = Field(default="2N3055", min_length=1, max_length=80)  # Transistor sugerido
+
+    @field_validator("topologia")
+    @classmethod
+    def normalizar_topologia(cls, valor: str) -> str:
+        return valor.strip().lower()
 
 
 # --- CONFIGURACIÓN DE MODELOS ---
@@ -110,12 +116,14 @@ MODELOS_DISPONIBLES = ["gemini-2.5-flash-lite", "gemini-2.5-flash"]
 
 # Máximo de mensajes de contexto enviados al modelo
 LIMITE_CONTEXTO = 30
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
 # --- PERSISTENCIA LOCAL (CARPETA DE HISTORIALES) ---
 RUTA_BASE = Path(__file__).resolve().parent
 RUTA_HISTORIALES = RUTA_BASE / "historiales"
 RUTA_HISTORIALES.mkdir(exist_ok=True)
 IDENTIFICADOR_SEGURO = re.compile(r"[^a-zA-Z0-9_-]")
+_historial_lock = Lock()
 
 
 def normalizar_identificador(valor: str, campo: str) -> str:
@@ -149,11 +157,14 @@ def cargar_historial_local(usuario: str, id_chat: str) -> List[Dict[str, str]]:
 
 def guardar_en_json_local(usuario: str, id_chat: str, mensaje_user: str, respuesta_bot: str) -> None:
     ruta = obtener_ruta_json(usuario, id_chat)
-    historial = cargar_historial_local(usuario, id_chat)
-    historial.append({"role": "user", "content": mensaje_user})
-    historial.append({"role": "assistant", "content": respuesta_bot})
-    with ruta.open("w", encoding="utf-8") as f:
-        json.dump(historial, f, ensure_ascii=False, indent=4)
+    with _historial_lock:
+        historial = cargar_historial_local(usuario, id_chat)
+        historial.append({"role": "user", "content": mensaje_user})
+        historial.append({"role": "assistant", "content": respuesta_bot})
+        ruta_temporal = ruta.with_suffix(".json.tmp")
+        with ruta_temporal.open("w", encoding="utf-8") as f:
+            json.dump(historial, f, ensure_ascii=False, indent=4)
+        ruta_temporal.replace(ruta)
 
 
 def formatear_sse_data(texto: str) -> str:
@@ -315,7 +326,7 @@ async def share_chat(usuario: str, id_chat: str):
     filas_html = ""
     for m in historial:
         rol = m.get("role", "")
-        contenido = m.get("content", "").replace("<", "&lt;").replace(">", "&gt;")
+        contenido = html.escape(str(m.get("content", "")))
         label = "Tú" if rol == "user" else "IA"
         color = "#3b82f6" if rol == "user" else "#10b981"
         filas_html += f'<p><strong style="color:{color}">{label}:</strong> {contenido}</p><hr>'
@@ -335,6 +346,9 @@ async def chat(req: ChatRequest):
             status_code=503,
             detail="No se encontró la variable GEMINI_API_KEY configurada en el entorno",
         )
+
+    if req.modelo_elegido not in MODELOS_DISPONIBLES:
+        raise HTTPException(status_code=400, detail="Modelo no soportado")
 
     historial_completo = cargar_historial_local(req.usuario, req.id_chat)
     historial_recortado = historial_completo[-LIMITE_CONTEXTO:]
@@ -361,7 +375,7 @@ async def chat(req: ChatRequest):
         )
 
     queue: asyncio.Queue = asyncio.Queue()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _llamar_gemini_en_hilo():
         try:
@@ -417,18 +431,26 @@ async def upload_file(file: UploadFile = File(...)):
 
     try:
         if nombre_archivo.endswith((".txt", ".csv", ".json", ".py", ".html", ".css", ".md")):
-            bytes_archivo = await file.read()
+            bytes_archivo = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(bytes_archivo) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="El archivo supera el límite de 10 MB")
             contenido_extraido = bytes_archivo.decode("utf-8", errors="ignore")
         elif nombre_archivo.endswith(".pdf"):
-            data = await file.read()
+            data = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="El archivo supera el límite de 10 MB")
             pdf = PdfReader(BytesIO(data))
             contenido_extraido = "\n".join([(p.extract_text() or "") for p in pdf.pages])
         elif nombre_archivo.endswith(".docx"):
-            data = await file.read()
+            data = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="El archivo supera el límite de 10 MB")
             doc = Document(BytesIO(data))
             contenido_extraido = "\n".join(p.text for p in doc.paragraphs)
         elif nombre_archivo.endswith(".xlsx"):
-            data = await file.read()
+            data = await file.read(MAX_UPLOAD_BYTES + 1)
+            if len(data) > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="El archivo supera el límite de 10 MB")
             wb = load_workbook(BytesIO(data), data_only=True)
             filas = []
             for ws in wb.worksheets:
